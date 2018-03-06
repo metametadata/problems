@@ -16,7 +16,8 @@
 
                  [cljs-react-material-ui "0.2.50"]]
 
-  :plugins [[lein-figwheel "0.5.14"]]
+  :plugins [[lein-figwheel "0.5.14"]
+            [lein-cljsbuild "1.1.7"]]
 
   :source-paths ["src" "target/classes"]
 

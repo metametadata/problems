@@ -2,47 +2,79 @@
   (:require [reagent.core :as r]
             [cljs-react-material-ui.core :as ui]
             [cljs-react-material-ui.icons :as ic]
-            ;; wtf
+    ;; wtf
             cljsjs.material-ui
             [cljs-react-material-ui.reagent :as rui]))
 
-(defonce text-state (r/atom "foobar"))
+(defn fixed-async-input
+  [original-component]
+  (fn fixed-component
+    [{:keys [value on-change] :as _props}]
+    {:pre [(ifn? on-change)]}
+    (let [local-value (atom value)]                         ; regular atom is used instead of React's state to better control when renders should be triggered
+      (r/create-class
+        {:display-name            "fixed-async-input-content"
 
-(def text-field (r/adapt-react-class (.-TextField js/MaterialUI)
-                                     {:synthetic-input {:on-update (fn [input-node-set-value node rendered-value dom-value this]
-                                                                     ;; node is the element rendered by TextField, i.e. div.
-                                                                     ;; If hintText is enabled, we need to control it's visibility
-                                                                     ;; when the value is changed by updating :value prop (not by user interaction).
-                                                                     (if (.-hintText (nth (.. this -props -argv) 5))
-                                                                       (let [hint-node (aget (.getElementsByTagName node "div") 0)]
-                                                                         (set! (.. hint-node -style -opacity)
-                                                                               (if (and (string? rendered-value) (seq rendered-value)) 0 1))))
-                                                                     ;; FIXME: floatingLabelText is broken
-                                                                     ;; Update input dom node value
-                                                                     (let [node (aget (.getElementsByTagName node "input") 0)]
-                                                                       (input-node-set-value node rendered-value dom-value this {})))
-                                                        :on-change (fn [on-change e]
-                                                                     (on-change e (.. e -target -value)))}}))
+         :should-component-update (fn [_ [_ old-props] [_ new-props]]
+                                    ; Update only if value is different from the rendered one or...
+                                    (if (not= (:value new-props) @local-value)
+                                      (do
+                                        (reset! local-value (:value new-props))
+                                        true)
+
+                                      ; other props changed
+                                      (not= (dissoc new-props :value)
+                                            (dissoc old-props :value))))
+
+         :render                  (fn [this]
+                                    [original-component
+                                     (-> (r/props this)
+                                         ; use value only from the local atom
+                                         (assoc :value @local-value)
+                                         (update :on-change
+                                                 (fn wrap-on-change [original-on-change]
+                                                   (fn wrapped-on-change [e]
+                                                     ; render immediately to sync DOM and virtual DOM
+                                                     (reset! local-value (.. e -target -value))
+                                                     (r/force-update this)
+
+                                                     ; this will presumably update the value in global state atom
+                                                     (original-on-change e)))))])}))))
+
+(def text-field-original (r/adapt-react-class (.-TextField js/MaterialUI)))
+(def text-field-fixed (fixed-async-input text-field-original))
+
+(defonce text-state (r/atom "foobar"))
 
 (defn main []
   [rui/mui-theme-provider
    {:mui-theme (ui/get-mui-theme
                  {:palette {:text-color (ui/color :green600)}})}
    [:div
-    [:div
-     [:strong @text-state]]
+    [:div [:strong @text-state]]
+
     [:button
      {:on-click #(swap! text-state str " foo")}
      "update value property"]
-    [text-field
-     {:id "example"
-      :value @text-state
-      ;; FIXME:
-      ; :floating-label-text "foo"
-      :hint-text "hint"
-      :on-change (fn [e]
-                   (js/console.log e)
-                   (reset! text-state (.. e -target -value)))}]]])
+
+    [text-field-fixed
+     {:id                  "example"
+      :value               @text-state
+      :floating-label-text "floating"
+      :hint-text           "hint"
+      :on-change           (fn [e]
+                             (js/console.log e)
+                             (reset! text-state (.. e -target -value)))}]
+
+    [:div
+     [:strong "ORIGINAL:"]
+     [text-field-original
+      {:id                  "example"
+       :value               @text-state
+       :floating-label-text "floating"
+       :hint-text           "hint"
+       :on-change           (fn [e]
+                              (reset! text-state (.. e -target -value)))}]]]])
 
 (defn start []
   (r/render [main] (js/document.getElementById "app")))
